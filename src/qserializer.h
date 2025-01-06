@@ -32,6 +32,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonValue>
+#include <QCborMap>
 #endif
 
 /* XML */
@@ -120,6 +121,69 @@ public:
         return json;
     }
 
+    /*! \brief  Serialize all accessed JSON propertyes for this object. */
+    QCborMap toCborMap(const bool &alwaysUseFloats = false) const {
+        QCborMap cbor;
+        for(int i = 0; i < metaObject()->propertyCount(); i++)
+        {
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+            if(QString(metaObject()->property(i).typeName()) != QMetaType::typeName(qMetaTypeId<QJsonValue>())) {
+                continue;
+            }
+#else
+            if(metaObject()->property(i).metaType().id() != QMetaType::QJsonValue) {
+                continue;
+            }
+#endif
+
+            const QJsonValue value = metaObject()->property(i).readOnGadget(this).toJsonValue();
+
+            cbor.insert(QString::fromUtf8(metaObject()->property(i).name()),
+                        value.isDouble() && alwaysUseFloats ?
+                            QCborValue((float) value.toDouble()) :
+                            QCborValue::fromJsonValue(value)
+                            );
+        }
+        return cbor;
+    }
+
+
+
+    /*! \brief  Serialize difference of all accessed JSON propertyes for this object. */
+    QCborMap toCborMap(const QCborMap &other, const bool &alwaysUseFloats = false) const {
+        QCborMap cbor;
+        for(int i = 0; i < metaObject()->propertyCount(); i++)
+        {
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+            if(QString(metaObject()->property(i).typeName()) != QMetaType::typeName(qMetaTypeId<QJsonValue>())) {
+                continue;
+            }
+#else
+            if(metaObject()->property(i).metaType().id() != QMetaType::QJsonValue) {
+                continue;
+            }
+#endif
+
+            const QString key = QString::fromUtf8(metaObject()->property(i).name());
+            const QJsonValue value = metaObject()->property(i).readOnGadget(this).toJsonValue();
+
+            if (const auto it = other.constFind(key); it != other.constEnd()) {
+                if (it.value() == (value.isDouble() && alwaysUseFloats ?
+                        QCborValue((float) value.toDouble()) :
+                        QCborValue::fromJsonValue(value)))
+                    continue;
+            }
+
+            cbor.insert(key,
+                        value.isDouble() && alwaysUseFloats ?
+                            QCborValue((float) value.toDouble()) :
+                            QCborValue::fromJsonValue(value)
+                            );
+        }
+        return cbor;
+    }
+
+
     /*! \brief  Returns QByteArray representation this object using json-serialization. */
     QByteArray toRawJson() const {
         return toByteArray(toJson());
@@ -149,6 +213,37 @@ public:
                     if(key == metaObject()->property(i).name())
                     {
                         metaObject()->property(i).writeOnGadget(this, json.value(key));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+
+    /*! \brief  Deserialize all accessed JSON propertyes for this object. */
+    void fromCbor(const QCborValue & val) {
+        if(val.isMap())
+        {
+            QCborMap cbor = val.toMap();
+            int propCount = metaObject()->propertyCount();
+            for(int i = 0; i < propCount; i++)
+            {
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+                if(QString(metaObject()->property(i).typeName()) != QMetaType::typeName(qMetaTypeId<QJsonValue>())) {
+                    continue;
+                }
+#else
+                if(metaObject()->property(i).metaType().id() != QMetaType::QJsonValue) {
+                    continue;
+                }
+#endif
+
+                for(auto key : cbor.keys())
+                {
+                    if(key == metaObject()->property(i).name())
+                    {
+                        metaObject()->property(i).writeOnGadget(this, cbor.value(key).toJsonValue());
                         break;
                     }
                 }
@@ -242,7 +337,7 @@ public:
         }                                                                                   \
         void SET(json, name)(const QJsonValue & varname){                                   \
             name = varname.toVariant().value<type>();                                       \
-        }                                                                                   
+        }
 #else
 #define QS_JSON_FIELD(type, name)
 #endif
@@ -267,7 +362,7 @@ public:
             if(domElement.tagName() == #name)                                               \
                 name = QVariant(domElement.text()).value<type>();                           \
         }                                                                                   \
-    }                                                                                       
+    }
 #else
 #define QS_XML_FIELD(type, name)
 #endif
@@ -294,7 +389,7 @@ public:
                 tmp = item.toVariant().value<itemType>();                                   \
                 name.append(tmp);                                                           \
             }                                                                               \
-        }                                                                                
+        }
 #else
 #define QS_JSON_ARRAY(itemType, name)
 #endif
@@ -369,7 +464,7 @@ public:
         }                                                                                   \
         void SET(xml, name)(const QDomNode & node){                                         \
             name.fromXml(node);                                                             \
-        }                                                                                   
+        }
 #else
 #define QS_XML_OBJECT(type, name)
 #endif
@@ -397,7 +492,7 @@ public:
                 tmp.fromJson(val.at(i));                                                    \
                 name.append(tmp);                                                           \
             }                                                                               \
-        }                                                                                   
+        }
 #else
 #define QS_JSON_ARRAY_OBJECTS(itemType, name)
 #endif
@@ -426,7 +521,7 @@ public:
             tmp.fromXml(nodesList.at(i));                                                   \
             name.append(tmp);                                                               \
         }                                                                                   \
-    }                                                                                       
+    }
 #else
 #define QS_XML_ARRAY_OBJECTS(itemType, name)
 #endif
@@ -456,7 +551,7 @@ public:
                 QVariant(p.key()).value<map::key_type>(),                                   \
                 QVariant(p.value()).value<map::mapped_type>());                             \
         }                                                                                   \
-    }                                                                                       
+    }
 #else
 #define QS_JSON_QT_DICT(map, name)
 #endif
@@ -498,7 +593,7 @@ public:
                 }                                                                                       \
             }                                                                                           \
         }                                                                                               \
-    }                                                                                                   
+    }
 #else
 #define QS_XML_QT_DICT(map, name)
 #endif
@@ -531,7 +626,7 @@ public:
                 QVariant(p.key()).value<map::key_type>(),                                   \
                 tmp);                                                                       \
         }                                                                                   \
-    }                                                                                       
+    }
 #else
 #define QS_JSON_QT_DICT_OBJECTS(map, name)
 #endif
@@ -575,7 +670,7 @@ public:
                 }                                                                                       \
             }                                                                                           \
         }                                                                                               \
-    }                                                                                                   
+    }
 #else
 #define QS_XML_QT_DICT_OBJECTS(map, name)
 #endif
@@ -605,7 +700,7 @@ public:
                 QVariant(p.key()).value<map::key_type>(),                                   \
                 QVariant(p.value()).value<map::mapped_type>()));                            \
         }                                                                                   \
-    }                                                                                       
+    }
 #else
 #define QS_JSON_STL_DICT(map, name)
 #endif
@@ -644,9 +739,9 @@ public:
                 }                                                                                       \
             }                                                                                           \
         }                                                                                               \
-    }                                                                                                   
+    }
 #else
-#define QS_XML_STL_DICT(map, name)                                                                    
+#define QS_XML_STL_DICT(map, name)
 #endif
 
 /* Generate JSON-property and methods for dictionary of custom type objects */
@@ -676,9 +771,9 @@ public:
                 QVariant(p.key()).value<map::key_type>(),                                   \
                 tmp));                                                                      \
         }                                                                                   \
-    }                                                                                       
+    }
 #else
-#define QS_JSON_STL_DICT_OBJECTS(map, name)                               
+#define QS_JSON_STL_DICT_OBJECTS(map, name)
 #endif
 
 /* Generate XML-property and methods for dictionary of custom type objects */
@@ -721,7 +816,7 @@ public:
                 }                                                                                       \
             }                                                                                           \
         }                                                                                               \
-    }                                                                                                   
+    }
 #else
 #define QS_XML_STL_DICT_OBJECTS(map, name)
 #endif
